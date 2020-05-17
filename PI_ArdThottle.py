@@ -1,0 +1,640 @@
+# Tem q instalar a biblioteca pyserial https://pypi.org/project/pyserial/
+# in linux: sudo apt-get install python-pyserial
+import serial
+import sys
+import glob
+import serial.tools.list_ports
+import json
+# X-plane includes
+from XPLMDefs import *
+from XPLMProcessing import *
+from XPLMDataAccess import *
+from XPLMUtilities import *
+from XPLMPlanes import *
+from XPLMNavigation import *
+from SandyBarbourUtilities import *
+from PythonScriptMessaging import *
+from XPLMPlugin import *
+from XPLMMenus import *
+from XPWidgetDefs import *
+from XPWidgets import *
+from XPStandardWidgets import *
+
+class PythonInterface:
+	def XPluginStart(self):
+		self.Name = "ArdTHROTTLE"
+		self.Sig =  "JUD.Python.ArdTHROTTLE"
+		self.Desc = "Conecta o THROTTLE Arduino ao Simulador"
+		self.MsgA = "Ard THROTTLE"
+		self.MsgB = ""
+
+		self.LEDS = "LD0000000,"
+		self.LEDSLastState = "LD0000001,"		
+		self.data = [0,0,0,0,0,0]
+		self.Potenciometros = {"A":0.0,"B":0.0,"C":0.0,"D":0.0,"E":0.0,"F":0.0}
+		self.throttleA = [0.0]
+		self.throttleB = [0.0]
+		
+		self.flapsPositions = []
+		self.flapsMedia = []
+				
+		self.portas = []
+		self.ardSerial = serial.Serial()
+		self.connected = False		
+		ports = serial.tools.list_ports.comports()
+		for port, desc, hwid in sorted(ports):
+			self.portas.append(port)
+		self.qtdPortas = len(self.portas)		
+		self.portasWidgets=[]
+
+		self.configs = {'portaCOM':'_',
+										'qtdFlaps':3,
+										'stepSpeedBMin':200,
+										'stepSpeedBMax':750,
+										'stepThrottleLMin':200,
+										'stepThrottleLMax':750,
+										'stepThrottleRMin':200,
+										'stepThrottleRMax':750,
+										'stepPropellerMin':200,
+										'stepPropellerMax':750,
+										'stepMixtureMin':200,
+										'stepMixtureMax':750,
+										'stepFlapMin':200,
+										'stepFlapMax':750,										
+										'stepPropellerAdjustMin':105.0,
+										'stepPropellerAdjustMax':230.0,
+										}
+
+		self.openConfig()
+		self.configflaps()
+		self.calibrar = False
+
+		self.DataRefSpeedBrake = XPLMFindDataRef("sim/cockpit2/controls/speedbrake_ratio")
+		self.DataRefThrottle = XPLMFindDataRef("sim/cockpit2/engine/actuators/throttle_ratio")
+		self.DataRefMixtureAll = XPLMFindDataRef("sim/cockpit2/engine/actuators/mixture_ratio_all")
+		self.DataRefPropellerAll = XPLMFindDataRef("sim/cockpit2/engine/actuators/prop_rotation_speed_rad_sec_all") #105.0 - 230.0
+		self.DataRefFlap = XPLMFindDataRef("sim/cockpit2/controls/flap_ratio")
+
+		self.DataRefGear1def = XPLMFindDataRef("sim/flightmodel/movingparts/gear1def")
+		self.DataRefGear2def = XPLMFindDataRef("sim/flightmodel/movingparts/gear2def")
+		self.DataRefGear3def = XPLMFindDataRef("sim/flightmodel/movingparts/gear3def")
+
+		self.DataRefParkingBrake = XPLMFindDataRef("sim/cockpit2/controls/parking_brake_ratio")
+
+		self.Floop = self.FloopCallback
+		XPLMRegisterFlightLoopCallback(self, self.Floop, 1.0, 0)
+
+		# Menu / About
+		self.Mmenu = self.mainMenuCB
+		self.configWindow = False
+		self.calibrarWindow = False
+		self.aboutWindow = False
+		self.mPluginItem = XPLMAppendMenuItem(XPLMFindPluginsMenu(), 'ArdTHROTTLE', 0, 1)
+		self.mMain       = XPLMCreateMenu(self, 'ArdTHROTTLE', XPLMFindPluginsMenu(), self.mPluginItem, self.Mmenu, 0)
+
+		# Menu Items
+		XPLMAppendMenuItem(self.mMain, 'Conectar', 1, 1)
+		XPLMAppendMenuItem(self.mMain, 'Calibrar', 2, 1)
+		XPLMAppendMenuItem(self.mMain, 'About', 3, 1)
+
+		return self.Name, self.Sig, self.Desc
+
+	def mainMenuCB(self, menuRef, menuItem):
+		if menuItem == 1:
+			if not self.configWindow:
+				self.createConfigWindow()
+				self.configWindow = True
+			elif (not XPIsWidgetVisible(self.configWindowWidget)):
+				XPShowWidget(self.configWindowWidget)
+
+		elif menuItem == 2:
+			if not self.calibrarWindow:
+				self.createCalibrarWindow()
+			elif not XPIsWidgetVisible(self.calibrarWindowWidget):
+				XPShowWidget(self.calibrarWindowWidget)
+
+		elif menuItem == 3:
+			if not self.aboutWindow:
+				self.createAboutWindow()
+			elif not XPIsWidgetVisible(self.aboutWindowWidget):
+				XPShowWidget(self.aboutWindowWidget)
+
+	def createConfigWindow(self):
+		# (left, top, bottom, right) lefto, esquerda, base, direita - A origem e no canto inferior esquerdo!
+		left = 240
+		top = 540
+		right = left + 160
+		bottom = top - 210 - (20 * (self.qtdPortas))
+		leftRst = left + 20 #com margem
+		topRst = top
+		rightRst = right - 20 #com margem
+		bottomRst = bottom
+		Titulo = "ArdT Conectar"
+		separador = '_________________________'
+
+		# criando a janela principal
+		self.configWindowWidget = XPCreateWidget(left, top, right, bottom, 1, Titulo, 1, 0, xpWidgetClass_MainWindow)
+		window = self.configWindowWidget
+		XPSetWidgetProperty(window, xpProperty_MainWindowHasCloseBoxes, 1) # botao de fechar a janela, simples assim hehe
+
+		# aviso
+		left += 20		
+		right -= 20
+		top -= 20
+		bottom = top - 15
+		XPCreateWidget(left-2, top, right, bottom, 1, '  Selecione a Serial', 0, window, xpWidgetClass_Caption)
+		top -= 15
+		bottom = top - 15
+		XPCreateWidget(left, top, right, bottom, 1,   '   que esta ligada', 0, window, xpWidgetClass_Caption)
+		top -= 15
+		bottom = top - 15
+		XPCreateWidget(left, top, right, bottom, 1,   '   no seu Throttle', 0, window, xpWidgetClass_Caption)
+
+		top -= 15
+		bottom = top - 5
+		self.separatorA = XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, window, xpWidgetClass_Caption)
+		
+		# radios botoes das portas seriais
+		self.portasWidgets = []
+		for i in range(self.qtdPortas):
+			top -= 20
+			bottom = top - 20
+			right = left + 5
+			self.portasWidgets.append(XPCreateWidget(left, top, right, bottom, 1, '', 0, window, xpWidgetClass_Button))
+			left = right + 5
+			right = rightRst
+			XPCreateWidget(left, top, right, bottom, 1, self.portas[i], 0, window, xpWidgetClass_Caption)
+			left = leftRst
+
+		for i in range(self.qtdPortas):
+			XPSetWidgetProperty(self.portasWidgets[i], xpProperty_ButtonType, xpRadioButton)
+			XPSetWidgetProperty(self.portasWidgets[i], xpProperty_ButtonBehavior, xpButtonBehaviorCheckBox)
+			XPSetWidgetProperty(self.portasWidgets[i], xpProperty_ButtonState, int(self.configs['portaCOM'] == self.portas[i]))
+
+		top -= 15
+		bottom = top - 5
+		self.separatorB = XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, window, xpWidgetClass_Caption)
+
+		top -= 20
+		bottom = top - 20
+		self.connectArduino = XPCreateWidget(left, top, right, bottom, 1, "--> CONECTAR <--", 0, window, xpWidgetClass_Button)
+		XPSetWidgetProperty(self.connectArduino, xpProperty_ButtonType, xpPushButton)
+
+		top -= 20
+		bottom = top - 40
+		if self.connected:
+			XPSetWidgetProperty (self.connectArduino , xpProperty_Enabled, 0)
+			self.textConnect = XPCreateWidget(left, top, right, bottom, 1, "    Conectado :D", 0, window, xpWidgetClass_Caption)
+		else:
+			XPSetWidgetProperty (self.connectArduino , xpProperty_Enabled, 1)
+			self.textConnect = XPCreateWidget(left, top, right, bottom, 1, "   Desconectado :(", 0, window, xpWidgetClass_Caption)
+			
+		top -= 35
+		bottom = top - 5
+		self.separatorC = XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, window, xpWidgetClass_Caption)
+
+		# Visit site Button
+		top -= 15
+		bottom = top - 20
+		self.homePage = XPCreateWidget(left, top, right, bottom, 1, "DESENVOLVEDOR", 0, window, xpWidgetClass_Button)
+		XPSetWidgetProperty(self.homePage, xpProperty_ButtonType, xpPushButton)
+
+		# Register our widget handler
+		self.configWindowHandleCB = self.configWindowHandle
+		XPAddWidgetCallback(self, window, self.configWindowHandleCB)
+
+		self.configWindow = window
+
+	def configWindowHandle(self, inMessage, inWidget, inParam1, inParam2):
+		if (inMessage == xpMessage_CloseButtonPushed):
+			if self.configWindow:
+				XPDestroyWidget(self, self.configWindowWidget, 1)
+				self.configWindow = False
+			return 1
+
+		if inMessage == xpMsg_ButtonStateChanged and inParam1 in self.portasWidgets:
+			if inParam2:
+				for i in self.portasWidgets:
+					if i != inParam1:
+						XPSetWidgetProperty(i, xpProperty_ButtonState, 0)
+			else:
+				XPSetWidgetProperty(inParam1, xpProperty_ButtonState, 1)
+			return 1
+
+		# Lidar com qualquer aperto de botao
+		if (inMessage == xpMsg_PushButtonPressed):
+
+			if (inParam1 == self.homePage):
+				from webbrowser import open_new
+				open_new('http://judenilson.com.br/');
+				return 1
+
+			if (inParam1 == self.connectArduino):				
+				for i in range(self.qtdPortas):
+					if XPGetWidgetProperty(self.portasWidgets[i], xpProperty_ButtonState, None):
+						self.configs['portaCOM'] = self.portas[i]
+				if self.connectSerial():
+					XPSetWidgetProperty (self.connectArduino , xpProperty_Enabled, 0)
+					XPSetWidgetDescriptor(self.textConnect, self.MsgA)
+				else:					
+					XPSetWidgetDescriptor(self.textConnect, self.MsgA)
+				return 1
+
+		return 0
+
+	def createCalibrarWindow(self):
+		# (left, top, bottom, right) lefto, esquerda, base, direita - A origem e no canto inferior esquerdo!
+		left = 420
+		top = 540
+		right = left + 160
+		bottom = top - 330
+		leftRst = left + 20 #com margem
+		topRst = top
+		rightRst = right - 20 #com margem
+		bottomRst = bottom
+		Titulo = "ArdT Calibrar"
+		separador = '_________________________'
+
+		# criando a janela principal
+		self.calibrarWindowWidget = XPCreateWidget(left, top, right, bottom, 1, Titulo, 1, 0, xpWidgetClass_MainWindow)
+		calWindow = self.calibrarWindowWidget
+		XPSetWidgetProperty(calWindow, xpProperty_MainWindowHasCloseBoxes, 1) # botao de fechar a janela, simples assim hehe
+
+		left += 20		
+		right -= 20
+		top -= 20
+		bottom = top - 15
+		XPCreateWidget(left, top, right, bottom, 1, 'Aperte em Calibrar', 0, calWindow, xpWidgetClass_Caption)
+		top -= 15
+		bottom = top - 15
+		XPCreateWidget(left, top, right, bottom, 1, 'mova os controles', 0, calWindow, xpWidgetClass_Caption)
+		top -= 15
+		bottom = top - 15
+		XPCreateWidget(left, top, right, bottom, 1, '  salve os ajustes', 0, calWindow, xpWidgetClass_Caption)
+
+		top -= 15
+		bottom = top - 5
+		XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, calWindow, xpWidgetClass_Caption)
+
+		top -= 15
+		bottom = top - 20
+		self.calibrarButton = XPCreateWidget(left, top, right, bottom, 1, "--> CALIBRAR <--", 0, calWindow, xpWidgetClass_Button)
+		XPSetWidgetProperty(self.calibrarButton, xpProperty_ButtonType, xpPushButton)
+		
+		top -= 15
+		bottom = top - 5
+		XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, calWindow, xpWidgetClass_Caption)
+										
+		top -= 15
+		bottom = top - 20
+		self.joySpeedBrake = XPCreateWidget(left, top, right, bottom, 1, '1 - ['+str(self.configs['stepSpeedBMin'])+'/'+str(self.configs['stepSpeedBMax'])+'] - '+str(self.data[0]), 0, calWindow, xpWidgetClass_Caption)
+		top -= 20
+		bottom = top - 20
+		self.joyThrottleL = XPCreateWidget(left, top, right, bottom, 1, '2 - ['+str(self.configs['stepThrottleLMin'])+'/'+str(self.configs['stepThrottleLMax'])+'] - '+str(self.data[1]), 0, calWindow, xpWidgetClass_Caption)
+		top -= 20
+		bottom = top - 20
+		self.joyThrottleR = XPCreateWidget(left, top, right, bottom, 1, '3 - ['+str(self.configs['stepThrottleRMin'])+'/'+str(self.configs['stepThrottleRMax'])+'] - '+str(self.data[2]), 0, calWindow, xpWidgetClass_Caption)
+		top -= 20
+		bottom = top - 20
+		self.joyPropeller = XPCreateWidget(left, top, right, bottom, 1, '4 - ['+str(self.configs['stepPropellerMin'])+'/'+str(self.configs['stepPropellerMax'])+'] - '+str(self.data[3]), 0, calWindow, xpWidgetClass_Caption)
+		top -= 20
+		bottom = top - 20
+		self.joyMixture = XPCreateWidget(left, top, right, bottom, 1, '5 - ['+str(self.configs['stepPropellerMin'])+'/'+str(self.configs['stepPropellerMax'])+'] - '+str(self.data[4]), 0, calWindow, xpWidgetClass_Caption)
+		top -= 20
+		bottom = top - 20
+		self.joyFlaps = XPCreateWidget(left, top, right, bottom, 1, '6 - ['+str(self.configs['stepFlapMin'])+'/'+str(self.configs['stepFlapMax'])+'] - '+str(self.data[5]), 0, calWindow, xpWidgetClass_Caption)
+		
+		top -= 15
+		bottom = top - 5
+		XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, calWindow, xpWidgetClass_Caption)
+		top -= 15
+		bottom = top - 20
+		self.textflap = XPCreateWidget(left, top, right, bottom, 1, "Posicoes FLAPS %d" % (self.configs['qtdFlaps']), 0, calWindow, xpWidgetClass_Caption)
+
+		top -= 20
+		bottom = top - 20
+		self.flapSlider = XPCreateWidget(left, top, right, bottom, 1, '', 0, calWindow, xpWidgetClass_ScrollBar)
+		XPSetWidgetProperty(self.flapSlider, xpProperty_ScrollBarType, xpScrollBarTypeSlider)
+		XPSetWidgetProperty(self.flapSlider, xpProperty_ScrollBarMin, 2)
+		XPSetWidgetProperty(self.flapSlider, xpProperty_ScrollBarMax, 12)
+		XPSetWidgetProperty(self.flapSlider, xpProperty_ScrollBarPageAmount, 1)
+
+		XPSetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, self.configs['qtdFlaps'])
+
+		top -= 15
+		bottom = top - 5
+		XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, calWindow, xpWidgetClass_Caption)
+
+		top -= 15
+		bottom = top - 20
+		self.save = XPCreateWidget(left, top, right, bottom, 1, "--> SALVAR <--", 0, calWindow, xpWidgetClass_Button)
+		XPSetWidgetProperty(self.save, xpProperty_ButtonType, xpPushButton)
+
+		top -= 20
+		bottom = top - 20
+		self.textSave = XPCreateWidget(left, top, right, bottom, 1, "", 0, calWindow, xpWidgetClass_Caption)
+
+		# Register our widget handler
+		self.calibrarWindowHandleCB = self.calibrarWindowHandle
+		XPAddWidgetCallback(self, calWindow, self.calibrarWindowHandleCB)
+
+		self.calibrarWindow = calWindow
+
+	def calibrarWindowHandle(self, inMessage, inWidget, inParam1, inParam2):
+		if (inMessage == xpMessage_CloseButtonPushed):
+			if self.calibrarWindow:
+				XPDestroyWidget(self, self.calibrarWindowWidget, 1)
+				self.calibrarWindow = False
+				self.calibrar = False
+			return 1
+
+		if inMessage == xpMsg_ScrollBarSliderPositionChanged and inParam1 == self.flapSlider:
+			val = XPGetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, None)
+			XPSetWidgetDescriptor(self.textflap, "Posicoes FLAPS %d" % (val))
+			return 1
+
+		# Lidar com qualquer aperto de botao
+		if (inMessage == xpMsg_PushButtonPressed):
+
+			if (inParam1 == self.calibrarButton):
+				XPSetWidgetDescriptor(self.calibrarButton, "Calibrando...")
+				XPSetWidgetDescriptor(self.textSave, "")
+				XPSetWidgetProperty (self.calibrarButton , xpProperty_Enabled, 0)
+				self.configs['stepSpeedBMin'] = self.data[0]
+				self.configs['stepSpeedBMax'] = self.data[0]+1
+				self.configs['stepThrottleLMin'] = self.data[1]
+				self.configs['stepThrottleLMax'] = self.data[1]+1
+				self.configs['stepThrottleRMin'] = self.data[2]
+				self.configs['stepThrottleRMax'] = self.data[2]+1
+				self.configs['stepPropellerMin'] = self.data[3]
+				self.configs['stepPropellerMax'] = self.data[3]+1
+				self.configs['stepMixtureMin'] = self.data[4]
+				self.configs['stepMixtureMax'] = self.data[4]+1
+				self.configs['stepFlapMin'] = self.data[5]
+				self.configs['stepFlapMax'] = self.data[5]+1
+				self.calibrar = True
+				return 1
+			if (inParam1 == self.save):
+				self.configs['qtdFlaps'] = XPGetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, None)
+				if self.saveConfig():
+					self.configflaps()
+					self.calibrar = False
+					XPSetWidgetDescriptor(self.calibrarButton, "--> CALIBRAR <--")
+					XPSetWidgetProperty (self.calibrarButton, xpProperty_Enabled, 1)
+					XPSetWidgetDescriptor(self.textSave, self.MsgB)
+				else:					
+					XPSetWidgetDescriptor(self.textSave, self.MsgB)
+				return 1
+
+		return 0
+
+	def createAboutWindow(self):
+		left = 100
+		w = 440
+		top = 600
+		h = 100
+		right = left + w
+		bottom = top - h
+		aboutTitle = "-- Sobre --"
+		mensagem = ['Produto desenvolvido por Judenilson Araujo sob licenca GNU/GPLv2.',
+								'Sinta-se livre para fazer o que quiser, com o software e o hardware.',
+								'Apenas solicito que voce tambem divulgue as melhorias e updates.',
+								'                                           Grande Abraco e divirta-se...']
+
+		self.aboutWindow = True
+		self.aboutWindowWidget = XPCreateWidget(left, top, right, bottom, 1, aboutTitle, 1, 0, xpWidgetClass_MainWindow)
+		about = self.aboutWindowWidget
+		XPSetWidgetProperty(about, xpProperty_MainWindowType,  xpMainWindowStyle_Translucent)
+		XPSetWidgetProperty(about, xpProperty_MainWindowHasCloseBoxes, 1)
+		left += 20
+		top -= 20
+
+		self.cap = []
+		for i in range(4):
+			self.cap.append(XPCreateWidget(left, top-(15*i), right, top-20-(20*i), 1, mensagem[i], 0, about, xpWidgetClass_Caption))
+			XPSetWidgetProperty(self.cap[i], xpProperty_CaptionLit, 1)
+
+		self.aboutWindowHandleCB = self.aboutWindowHandle
+		XPAddWidgetCallback(self, about, self.aboutWindowHandleCB)
+
+		self.aboutWindow = about
+
+	def aboutWindowHandle(self, inMessage, inWidget, inParam1, inParam2):
+		if inMessage == xpMessage_CloseButtonPushed:
+			if self.aboutWindow:
+				XPHideWidget(self.aboutWindowWidget)
+				return 1
+		return 0
+
+	def connectSerial(self):
+		try:
+			self.ardSerial.baudrate = 115200
+			self.ardSerial.port = self.configs['portaCOM']
+			self.ardSerial.open()
+			if(self.ardSerial.isOpen()):
+				self.connected = True
+				self.MsgA = "    Conectado :D"
+				self.saveConfig()
+				return 1
+		except serial.SerialException as e:
+			if self.configs['portaCOM'] == '_':
+				self.MsgA = "Escolha uma Porta!"
+			else:
+				self.MsgA = str(e)
+			return 0
+		return 0
+	
+	def openConfig(self):
+		try:			
+			print('Arquivo config nao existe.')
+			with open('Resources/plugins/PythonScripts/PI_ArdThottle_config.json', 'r') as json_file:
+				self.configs = json.load(json_file)
+		except IOError:
+			with open('Resources/plugins/PythonScripts/PI_ArdThottle_config.json', 'w') as json_file:
+				json.dump(self.configs, json_file, indent = 4)
+			print('Arquivo config criado com sucesso!')
+		return 1
+
+	def saveConfig(self):
+		try:				
+			with open('Resources/plugins/PythonScripts/PI_ArdThottle_config.json', 'w') as json_file:
+				json.dump(self.configs, json_file, indent = 4)
+			self.MsgB = "     Ajuste Salvo!"
+			print('Configs salvas com sucesso!')
+			return 1
+		except IOError:
+			self.MsgB = 'Erro em salvar'
+			print('Erro em salvar config, saveConfig()')
+			return 0
+		return 0
+
+	def calibrarJoystick(self):
+		if self.calibrar:
+			if self.data[0] < self.configs['stepSpeedBMin']:
+				self.configs['stepSpeedBMin'] = self.data[0]-1
+			if self.data[0] > self.configs['stepSpeedBMax']:
+				self.configs['stepSpeedBMax'] = self.data[0]+1
+			if self.data[1] < self.configs['stepThrottleLMin']:
+				self.configs['stepThrottleLMin'] = self.data[1]-1
+			if self.data[1] > self.configs['stepThrottleLMax']:
+				self.configs['stepThrottleLMax'] = self.data[1]+1
+			if self.data[2] < self.configs['stepThrottleRMin']:
+				self.configs['stepThrottleRMin'] = self.data[2]-1
+			if self.data[2] > self.configs['stepThrottleRMax']:
+				self.configs['stepThrottleRMax'] = self.data[2]+1
+			if self.data[3] < self.configs['stepPropellerMin']:
+				self.configs['stepPropellerMin'] = self.data[3]-1
+			if self.data[3] > self.configs['stepPropellerMax']:
+				self.configs['stepPropellerMax'] = self.data[3]+1
+			if self.data[4] < self.configs['stepMixtureMin']:
+				self.configs['stepMixtureMin'] = self.data[4]-1
+			if self.data[4] > self.configs['stepMixtureMax']:
+				self.configs['stepMixtureMax'] = self.data[4]+1
+			if self.data[5] < self.configs['stepFlapMin']:
+				self.configs['stepFlapMin'] = self.data[5]-1
+			if self.data[5] > self.configs['stepFlapMax']:
+				self.configs['stepFlapMax'] = self.data[5]+1
+				
+		XPSetWidgetDescriptor(self.joySpeedBrake, '1 - ['+str(self.configs['stepSpeedBMin'])+'/'+str(self.configs['stepSpeedBMax'])+'] - '+str(self.data[0]))
+		XPSetWidgetDescriptor(self.joyThrottleL, '2 - ['+str(self.configs['stepThrottleLMin'])+'/'+str(self.configs['stepThrottleLMax'])+'] - '+str(self.data[1]))
+		XPSetWidgetDescriptor(self.joyThrottleR, '3 - ['+str(self.configs['stepThrottleRMin'])+'/'+str(self.configs['stepThrottleRMax'])+'] - '+str(self.data[2]))
+		XPSetWidgetDescriptor(self.joyPropeller, '4 - ['+str(self.configs['stepPropellerMin'])+'/'+str(self.configs['stepPropellerMax'])+'] - '+str(self.data[3]))
+		XPSetWidgetDescriptor(self.joyMixture, '5 - ['+str(self.configs['stepMixtureMin'])+'/'+str(self.configs['stepMixtureMax'])+'] - '+str(self.data[4]))
+		XPSetWidgetDescriptor(self.joyFlaps, '6 - ['+str(self.configs['stepFlapMin'])+'/'+str(self.configs['stepFlapMax'])+'] - '+str(self.data[5]))
+
+	def WhiteLEDS(self):
+		GEARDOWN1DEF = XPLMGetDataf(self.DataRefGear1def)
+		GEARDOWN2DEF = XPLMGetDataf(self.DataRefGear2def)		
+		GEARDOWN3DEF = XPLMGetDataf(self.DataRefGear3def)
+		PARKB = int(XPLMGetDataf(self.DataRefParkingBrake))
+
+		self.LEDS = "LD"
+		# --------------------------------------- Gear Down L
+		if GEARDOWN1DEF == 1:
+			self.LEDS += "01"
+		elif GEARDOWN1DEF == 0:
+			self.LEDS += "00"
+		else:
+			self.LEDS += "10"
+		# --------------------------------------- Gear Down C
+		if GEARDOWN2DEF == 1:
+			self.LEDS += "01"
+		elif GEARDOWN2DEF == 0:
+			self.LEDS += "00"
+		else:
+			self.LEDS += "10"
+		# --------------------------------------- Gear Down R
+		if GEARDOWN3DEF == 1:
+			self.LEDS += "01"
+		elif GEARDOWN3DEF == 0:
+			self.LEDS += "00"
+		else:
+			self.LEDS += "10"
+		# --------------------------------------- Parking Brake
+		if PARKB == 1:
+			self.LEDS += "1"
+		else:
+			self.LEDS += "0"
+		self.LEDS += ","
+
+		return
+
+	def configflaps(self):
+		qtdFlaps = self.configs['qtdFlaps']
+		if qtdFlaps < 2:
+			qtdFlaps = 2
+		fator = 1.0/(qtdFlaps-1)
+		self.flapsPositions = []
+		self.flapsMedia = [0.0]
+		for i in range(qtdFlaps):
+			self.flapsPositions.append((fator*i))
+		for i in range(qtdFlaps-1):
+			self.flapsMedia.append((self.flapsPositions[i]+self.flapsPositions[i+1])/2)		
+		self.flapsMedia.append(1.0)
+		self.saveConfig()
+	
+	def flapsAdjust(self, flaps):
+		for i in range(self.configs['qtdFlaps']+1):
+			if flaps >= self.flapsMedia[i] and flaps <= self.flapsMedia[i+1]:
+				self.MsgB = str(self.flapsPositions[i])				
+				XPSetWidgetDescriptor(self.textSave, self.MsgB)
+				return self.flapsPositions[i]
+		return 0
+
+	def stepRange(self, value):
+		if value <= 0.0:
+			return 0.0
+		if value >= 1.0:
+			return 1.0
+		return value
+
+	def FloopCallback(self, elapsedMe, elapsedSim, counter, refcon):
+		if self.connected:
+			self.WhiteLEDS()
+
+			writeAgain = False
+			stepSpeedBFit = self.configs['stepSpeedBMax'] - self.configs['stepSpeedBMin']
+			stepThrottleLFit = self.configs['stepThrottleLMax'] - self.configs['stepThrottleLMin']
+			stepThrottleRFit = self.configs['stepThrottleRMax'] - self.configs['stepThrottleRMin']
+			stepPropellerFit = self.configs['stepPropellerMax'] - self.configs['stepPropellerMin']
+			stepMixtureFit = self.configs['stepMixtureMax'] - self.configs['stepMixtureMin']
+			stepFlapFit = self.configs['stepFlapMax'] - self.configs['stepFlapMin']
+			stepPropellerAdjustFit = self.configs['stepPropellerAdjustMax'] - self.configs['stepPropellerAdjustMin']
+
+			if self.ardSerial.isOpen():
+				if self.LEDS != self.LEDSLastState:
+					self.ardSerial.write(self.LEDS)
+					self.LEDSLastState = self.LEDS
+					writeAgain = True
+
+				while self.ardSerial.inWaiting() > 0:
+					readData = []
+					inSerial = self.ardSerial.readline()
+					readData = inSerial.split(",")
+					if readData[0] == "P":					
+						self.data[0] = int(readData[1])
+						self.data[1] = int(readData[2])
+						self.data[2] = int(readData[3])
+						self.data[3] = int(readData[4])
+						self.data[4] = int(readData[5])
+						self.data[5] = int(readData[6])
+						self.Potenciometros["A"] = self.stepRange(1-(1.0/stepSpeedBFit)*(self.data[0]-self.configs['stepSpeedBMin']))
+						self.Potenciometros["B"] = self.stepRange((1.0/stepThrottleLFit)*(self.data[1]-self.configs['stepThrottleLMin']))
+						self.Potenciometros["C"] = self.stepRange((1.0/stepThrottleRFit)*(self.data[2]-self.configs['stepThrottleRMin']))
+						self.Potenciometros["D"] = self.configs['stepPropellerAdjustMin'] + (stepPropellerAdjustFit/stepPropellerFit)*(self.data[3]-self.configs['stepPropellerMin'])
+						self.Potenciometros["E"] = self.stepRange((1.0/stepMixtureFit)*(self.data[4]-self.configs['stepMixtureMin']))
+						flaps = self.stepRange(1-(1.0/stepFlapFit)*(self.data[5]-self.configs['stepFlapMin']))
+						
+						self.Potenciometros["F"] = self.flapsAdjust(flaps)
+
+						self.throttleA[0] = self.Potenciometros["B"]
+						self.throttleB[0] = self.Potenciometros["C"]
+
+					XPLMSetDataf(self.DataRefSpeedBrake, self.Potenciometros["A"])
+					XPLMSetDatavf(self.DataRefThrottle, self.throttleA, 0, 8)
+					XPLMSetDatavf(self.DataRefThrottle, self.throttleB, 1, 8)
+					XPLMSetDataf(self.DataRefPropellerAll, self.Potenciometros["D"])
+					XPLMSetDataf(self.DataRefMixtureAll, self.Potenciometros["E"])
+					XPLMSetDataf(self.DataRefFlap, self.Potenciometros["F"])
+
+				if self.calibrarWindow:
+					self.calibrarJoystick()
+
+				if writeAgain == True:
+					self.ardSerial.write(self.LEDS)
+					writeAgain = False
+					
+		# A funcao devera ser chamada novamente em 0.5 sec
+		return 0.03		
+		
+	def XPluginStop(self):
+		pass
+
+	def XPluginEnable(self):
+		return 1
+
+	def XPluginDisable(self):
+		pass
+
+	def XPluginReceiveMessage(self, inFromWho, inMessage, inParam):
+		pass
