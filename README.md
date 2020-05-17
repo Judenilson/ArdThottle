@@ -23,7 +23,9 @@ No menu do simulador, na lista de plugin vocẽ verá o ítem:
 	- Conectar
 	- Calibrar
 	- About
+
 Ao clicar, serão apresentadas as seguintes janelas:
+
 ![](janelas.png)
 
 #### ArdT Conectar:
