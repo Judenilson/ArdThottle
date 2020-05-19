@@ -27,7 +27,7 @@ class PythonInterface:
 		self.Desc = "Conecta o THROTTLE Arduino ao Simulador"
 		self.MsgA = "Ard THROTTLE"
 		self.MsgB = ""
-
+		
 		self.LEDS = "LD0000000,"
 		self.LEDSLastState = "LD0000001,"		
 		self.data = [0,0,0,0,0,0]
@@ -48,6 +48,7 @@ class PythonInterface:
 		self.portasWidgets=[]
 
 		self.configs = {'portaCOM':'_',
+										'aircraft':'',
 										'qtdFlaps':3,
 										'stepSpeedBMin':200,
 										'stepSpeedBMax':750,
@@ -68,6 +69,10 @@ class PythonInterface:
 		self.openConfig()
 		self.configflaps()
 		self.calibrar = False
+		self.ziboDRef = False
+		
+		self.aircraftType = ['zibo']
+		self.aircraftMsg = ['Marque para ZIBO']
 
 		self.DataRefSpeedBrake = XPLMFindDataRef("sim/cockpit2/controls/speedbrake_ratio")
 		self.DataRefThrottle = XPLMFindDataRef("sim/cockpit2/engine/actuators/throttle_ratio")
@@ -78,7 +83,7 @@ class PythonInterface:
 		self.DataRefGear1def = XPLMFindDataRef("sim/flightmodel/movingparts/gear1def")
 		self.DataRefGear2def = XPLMFindDataRef("sim/flightmodel/movingparts/gear2def")
 		self.DataRefGear3def = XPLMFindDataRef("sim/flightmodel/movingparts/gear3def")
-
+		
 		self.DataRefParkingBrake = XPLMFindDataRef("sim/cockpit2/controls/parking_brake_ratio")
 
 		self.Floop = self.FloopCallback
@@ -95,9 +100,17 @@ class PythonInterface:
 		# Menu Items
 		XPLMAppendMenuItem(self.mMain, 'Conectar', 1, 1)
 		XPLMAppendMenuItem(self.mMain, 'Calibrar', 2, 1)
-		XPLMAppendMenuItem(self.mMain, 'About', 3, 1)
+		XPLMAppendMenuItem(self.mMain, 'Sobre', 3, 1)
 
 		return self.Name, self.Sig, self.Desc
+
+	def ZIBODataREF(self):
+		# Data Refs do ZIBO
+		self.ZIBODataRefFlap = XPLMFindDataRef("laminar/B738/flt_ctrls/flap_lever")
+		self.ZIBODataRefSpeedBrake = XPLMFindDataRef("laminar/B738/flt_ctrls/speedbrake_lever")
+		self.ZIBODataRefSpeedBrakeStop = XPLMFindDataRef("laminar/B738/flt_ctrls/speedbrake_lever_stop")
+		self.ziboDRef = True
+		return 1
 
 	def mainMenuCB(self, menuRef, menuItem):
 		if menuItem == 1:
@@ -124,7 +137,7 @@ class PythonInterface:
 		left = 240
 		top = 540
 		right = left + 160
-		bottom = top - 210 - (20 * (self.qtdPortas))
+		bottom = top - 188 - (20 * (self.qtdPortas))
 		leftRst = left + 20 #com margem
 		topRst = top
 		rightRst = right - 20 #com margem
@@ -195,7 +208,7 @@ class PythonInterface:
 
 		# Visit site Button
 		top -= 15
-		bottom = top - 20
+		bottom = top - 15
 		self.homePage = XPCreateWidget(left, top, right, bottom, 1, "DESENVOLVEDOR", 0, window, xpWidgetClass_Button)
 		XPSetWidgetProperty(self.homePage, xpProperty_ButtonType, xpPushButton)
 
@@ -233,6 +246,7 @@ class PythonInterface:
 				for i in range(self.qtdPortas):
 					if XPGetWidgetProperty(self.portasWidgets[i], xpProperty_ButtonState, None):
 						self.configs['portaCOM'] = self.portas[i]
+					
 				if self.connectSerial():
 					XPSetWidgetProperty (self.connectArduino , xpProperty_Enabled, 0)
 					XPSetWidgetDescriptor(self.textConnect, self.MsgA)
@@ -247,7 +261,7 @@ class PythonInterface:
 		left = 420
 		top = 540
 		right = left + 160
-		bottom = top - 330
+		bottom = top - 370
 		leftRst = left + 20 #com margem
 		topRst = top
 		rightRst = right - 20 #com margem
@@ -307,9 +321,26 @@ class PythonInterface:
 		top -= 15
 		bottom = top - 5
 		XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, calWindow, xpWidgetClass_Caption)
+
+		top -= 20
+		bottom = top - 20
+		right = left + 5
+		self.airplaneWidgets = XPCreateWidget(left, top, right, bottom, 1, '', 0, calWindow, xpWidgetClass_Button)
+		left = right + 5
+		right = rightRst
+		XPCreateWidget(left, top, right, bottom, 1, self.aircraftMsg[0], 0, calWindow, xpWidgetClass_Caption)
+		XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonType, xpRadioButton)
+		XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonBehavior, xpButtonBehaviorCheckBox)
+		XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, int(self.configs['aircraft'] == self.aircraftType[0]))
+		left = leftRst		
+
+		top -= 15
+		bottom = top - 5
+		XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, calWindow, xpWidgetClass_Caption)
+
 		top -= 15
 		bottom = top - 20
-		self.textflap = XPCreateWidget(left, top, right, bottom, 1, "Posicoes FLAPS %d" % (self.configs['qtdFlaps']), 0, calWindow, xpWidgetClass_Caption)
+		self.textflap = XPCreateWidget(left, top, right, bottom, 1, " Posicoes FLAPS %d" % (self.configs['qtdFlaps']), 0, calWindow, xpWidgetClass_Caption)
 
 		top -= 20
 		bottom = top - 20
@@ -348,9 +379,18 @@ class PythonInterface:
 				self.calibrar = False
 			return 1
 
+		if inMessage == xpMsg_ButtonStateChanged and inParam1 == self.airplaneWidgets:
+			if inParam2:
+				XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, 1)
+				XPSetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, 9)				
+				XPSetWidgetDescriptor(self.textflap, " Posicoes FLAPS 9")
+			else:
+				XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, 0)
+			return 1
+
 		if inMessage == xpMsg_ScrollBarSliderPositionChanged and inParam1 == self.flapSlider:
 			val = XPGetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, None)
-			XPSetWidgetDescriptor(self.textflap, "Posicoes FLAPS %d" % (val))
+			XPSetWidgetDescriptor(self.textflap, " Posicoes FLAPS %d" % (val))
 			return 1
 
 		# Lidar com qualquer aperto de botao
@@ -374,7 +414,15 @@ class PythonInterface:
 				self.configs['stepFlapMax'] = self.data[5]+1
 				self.calibrar = True
 				return 1
-			if (inParam1 == self.save):
+			if (inParam1 == self.save):				
+				if XPGetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, None):
+					self.configs['aircraft'] = self.aircraftType[0]
+					self.ziboDRef = True
+					self.ZIBODataREF()					
+				else:
+					self.configs['aircraft'] = ''
+					self.ziboDRef = False
+
 				self.configs['qtdFlaps'] = XPGetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, None)
 				if self.saveConfig():
 					self.configflaps()
@@ -433,7 +481,7 @@ class PythonInterface:
 			self.ardSerial.open()
 			if(self.ardSerial.isOpen()):
 				self.connected = True
-				self.MsgA = "    Conectado :D"
+				self.MsgA = "    Conectado :D"			
 				self.saveConfig()
 				return 1
 		except serial.SerialException as e:
@@ -556,8 +604,6 @@ class PythonInterface:
 	def flapsAdjust(self, flaps):
 		for i in range(self.configs['qtdFlaps']+1):
 			if flaps >= self.flapsMedia[i] and flaps <= self.flapsMedia[i+1]:
-				self.MsgB = str(self.flapsPositions[i])				
-				XPSetWidgetDescriptor(self.textSave, self.MsgB)
 				return self.flapsPositions[i]
 		return 0
 
@@ -616,6 +662,14 @@ class PythonInterface:
 					XPLMSetDataf(self.DataRefPropellerAll, self.Potenciometros["D"])
 					XPLMSetDataf(self.DataRefMixtureAll, self.Potenciometros["E"])
 					XPLMSetDataf(self.DataRefFlap, self.Potenciometros["F"])
+					if self.ziboDRef:
+						if self.Potenciometros["A"] > 0:
+							XPLMSetDataf(self.ZIBODataRefSpeedBrakeStop, 1.0)
+						else:
+							XPLMSetDataf(self.ZIBODataRefSpeedBrakeStop, 0.0)
+						XPLMSetDataf(self.ZIBODataRefSpeedBrake, self.Potenciometros["A"])
+						XPLMSetDataf(self.ZIBODataRefFlap, self.Potenciometros["F"])
+
 
 				if self.calibrarWindow:
 					self.calibrarJoystick()
@@ -624,7 +678,7 @@ class PythonInterface:
 					self.ardSerial.write(self.LEDS)
 					writeAgain = False
 					
-		# A funcao devera ser chamada novamente em 0.5 sec
+		# A funcao devera ser chamada novamente em 0.3 sec
 		return 0.03		
 		
 	def XPluginStop(self):
