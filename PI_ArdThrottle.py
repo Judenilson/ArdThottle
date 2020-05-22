@@ -495,17 +495,17 @@ class PythonInterface:
 	def openConfig(self):
 		try:			
 			print('Arquivo config nao existe.')
-			with open('Resources/plugins/PythonScripts/PI_ArdThottle_config.json', 'r') as json_file:
+			with open('Resources/plugins/PythonScripts/PI_ArdThrottle_config.json', 'r') as json_file:
 				self.configs = json.load(json_file)
 		except IOError:
-			with open('Resources/plugins/PythonScripts/PI_ArdThottle_config.json', 'w') as json_file:
+			with open('Resources/plugins/PythonScripts/PI_ArdThrottle_config.json', 'w') as json_file:
 				json.dump(self.configs, json_file, indent = 4)
 			print('Arquivo config criado com sucesso!')
 		return 1
 
 	def saveConfig(self):
 		try:				
-			with open('Resources/plugins/PythonScripts/PI_ArdThottle_config.json', 'w') as json_file:
+			with open('Resources/plugins/PythonScripts/PI_ArdThrottle_config.json', 'w') as json_file:
 				json.dump(self.configs, json_file, indent = 4)
 			self.MsgB = "     Ajuste Salvo!"
 			print('Configs salvas com sucesso!')
