@@ -637,13 +637,16 @@ class PythonInterface:
 					readData = []
 					inSerial = self.ardSerial.readline()
 					readData = inSerial.split(",")
-					if readData[0] == "P":					
-						self.data[0] = int(readData[1])
-						self.data[1] = int(readData[2])
-						self.data[2] = int(readData[3])
-						self.data[3] = int(readData[4])
-						self.data[4] = int(readData[5])
-						self.data[5] = int(readData[6])
+					if readData[0] == "P":
+						try:
+							self.data[0] = int(readData[1])
+							self.data[1] = int(readData[2])
+							self.data[2] = int(readData[3])
+							self.data[3] = int(readData[4])
+							self.data[4] = int(readData[5])
+							self.data[5] = int(readData[6])
+						except:
+							pass
 						self.Potenciometros["A"] = self.stepRange(1-(1.0/stepSpeedBFit)*(self.data[0]-self.configs['stepSpeedBMin']))
 						self.Potenciometros["B"] = self.stepRange((1.0/stepThrottleLFit)*(self.data[1]-self.configs['stepThrottleLMin']))
 						self.Potenciometros["C"] = self.stepRange((1.0/stepThrottleRFit)*(self.data[2]-self.configs['stepThrottleRMin']))
