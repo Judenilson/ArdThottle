@@ -91,6 +91,8 @@ class PythonInterface:
 
 		# Menu / About
 		self.Mmenu = self.mainMenuCB
+		self.flagConfigWindow = False
+		self.timeCloseConfigWindow = 0
 		self.configWindow = False
 		self.calibrarWindow = False
 		self.aboutWindow = False
@@ -250,6 +252,7 @@ class PythonInterface:
 				if self.connectSerial():
 					XPSetWidgetProperty (self.connectArduino , xpProperty_Enabled, 0)
 					XPSetWidgetDescriptor(self.textConnect, self.MsgA)
+					self.flagConfigWindow = True
 				else:					
 					XPSetWidgetDescriptor(self.textConnect, self.MsgA)
 				return 1
@@ -628,6 +631,16 @@ class PythonInterface:
 			stepPropellerAdjustFit = self.configs['stepPropellerAdjustMax'] - self.configs['stepPropellerAdjustMin']
 
 			if self.ardSerial.isOpen():
+
+				if self.flagConfigWindow:
+					self.timeCloseConfigWindow += 1
+					if self.timeCloseConfigWindow >= 100:
+						if self.configWindow:
+							XPDestroyWidget(self, self.configWindowWidget, 1)
+							self.configWindow = False
+							self.timeCloseConfigWindow = 0
+							self.flagConfigWindow = False
+
 				if self.LEDS != self.LEDSLastState:
 					self.ardSerial.write(self.LEDS)
 					self.LEDSLastState = self.LEDS
