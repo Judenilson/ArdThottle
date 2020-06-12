@@ -80,6 +80,8 @@ class PythonInterface:
 		self.DataRefPropellerAll = XPLMFindDataRef("sim/cockpit2/engine/actuators/prop_rotation_speed_rad_sec_all") #105.0 - 230.0
 		self.DataRefFlap = XPLMFindDataRef("sim/cockpit2/controls/flap_ratio")
 
+		self.DataRefAutoTh = XPLMFindDataRef("sim/cockpit2/autopilot/autothrottle_enabled") 
+
 		self.DataRefGear1def = XPLMFindDataRef("sim/flightmodel/movingparts/gear1def")
 		self.DataRefGear2def = XPLMFindDataRef("sim/flightmodel/movingparts/gear2def")
 		self.DataRefGear3def = XPLMFindDataRef("sim/flightmodel/movingparts/gear3def")
@@ -673,8 +675,9 @@ class PythonInterface:
 						self.throttleB[0] = self.Potenciometros["C"]
 
 					XPLMSetDataf(self.DataRefSpeedBrake, self.Potenciometros["A"])
-					XPLMSetDatavf(self.DataRefThrottle, self.throttleA, 0, 8)
-					XPLMSetDatavf(self.DataRefThrottle, self.throttleB, 1, 8)
+					if XPLMGetDatai(self.DataRefAutoTh) == 0:						
+						XPLMSetDatavf(self.DataRefThrottle, self.throttleA, 0, 8)
+						XPLMSetDatavf(self.DataRefThrottle, self.throttleB, 1, 8)
 					XPLMSetDataf(self.DataRefPropellerAll, self.Potenciometros["D"])
 					XPLMSetDataf(self.DataRefMixtureAll, self.Potenciometros["E"])
 					XPLMSetDataf(self.DataRefFlap, self.Potenciometros["F"])
