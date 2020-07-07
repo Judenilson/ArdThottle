@@ -32,8 +32,8 @@ class PythonInterface:
 		self.LEDSLastState = "LD0000001,"		
 		self.data = [0,0,0,0,0,0]
 		self.Potenciometros = {"A":0.0,"B":0.0,"C":0.0,"D":0.0,"E":0.0,"F":0.0}
-		self.throttleA = [0.0]
-		self.throttleB = [0.0]
+		self.throttle = [0.0,0.0]
+		self.prop = [0.0,0.0,0.0]
 		
 		self.flapsPositions = []
 		self.flapsMedia = []
@@ -48,36 +48,41 @@ class PythonInterface:
 		self.portasWidgets=[]
 
 		self.configs = {'portaCOM':'_',
-										'aircraft':'',
-										'qtdFlaps':3,
-										'stepSpeedBMin':200,
-										'stepSpeedBMax':750,
-										'stepThrottleLMin':200,
-										'stepThrottleLMax':750,
-										'stepThrottleRMin':200,
-										'stepThrottleRMax':750,
-										'stepPropellerMin':200,
-										'stepPropellerMax':750,
-										'stepMixtureMin':200,
-										'stepMixtureMax':750,
-										'stepFlapMin':200,
-										'stepFlapMax':750,										
-										'stepPropellerAdjustMin':105.0,
-										'stepPropellerAdjustMax':230.0,
-										}
+						'aircraft':'',
+						'qtdFlaps':3,
+						'stepSpeedBMin':200,
+						'stepSpeedBMax':750,
+						'stepThrottleLMin':200,
+						'stepThrottleLMax':750,
+						'stepThrottleRMin':200,
+						'stepThrottleRMax':750,
+						'stepPropellerMin':200,
+						'stepPropellerMax':750,
+						'stepMixtureMin':200,
+						'stepMixtureMax':750,
+						'stepFlapMin':200,
+						'stepFlapMax':750,										
+						'stepPropellerAdjustMin':105.0,
+						'stepPropellerAdjustMax':230.0,
+						}
 
 		self.openConfig()
 		self.configflaps()
+		self.calibarProp = False
 		self.calibrar = False
 		self.ziboDRef = False
+		self.tolissDRef = False
+		self.ka350DRef = False
 		
 		self.aircraftType = ['zibo']
-		self.aircraftMsg = ['Marque para ZIBO']
 
 		self.DataRefSpeedBrake = XPLMFindDataRef("sim/cockpit2/controls/speedbrake_ratio")
 		self.DataRefThrottle = XPLMFindDataRef("sim/cockpit2/engine/actuators/throttle_ratio")
+
+
 		self.DataRefMixtureAll = XPLMFindDataRef("sim/cockpit2/engine/actuators/mixture_ratio_all")
-		self.DataRefPropellerAll = XPLMFindDataRef("sim/cockpit2/engine/actuators/prop_rotation_speed_rad_sec_all") #105.0 - 230.0
+		self.DataRefPropeller = XPLMFindDataRef("sim/cockpit2/engine/actuators/prop_rotation_speed_rad_sec") #float array[8]
+		self.DataRefPropellerAll = XPLMFindDataRef("sim/cockpit2/engine/actuators/prop_rotation_speed_rad_sec_all") #105.0 - 230.0 #99.0 - 146.0
 		self.DataRefFlap = XPLMFindDataRef("sim/cockpit2/controls/flap_ratio")
 
 		self.DataRefAutoTh = XPLMFindDataRef("sim/cockpit2/autopilot/autothrottle_enabled") 
@@ -107,6 +112,16 @@ class PythonInterface:
 		XPLMAppendMenuItem(self.mMain, 'Sobre', 3, 1)
 
 		return self.Name, self.Sig, self.Desc
+
+	def ka350DataRef(self):		
+		# Data Refs do Airfoilabs K350
+		self.KA350DataRefProp = XPLMFindDataRef("KA350/systems/throttle/propLeverPosition") #array 3 dados [L, R, o maior L ou R]
+		return 1
+
+	def TolissDataRef(self):		
+		# Data Refs do TOLISS
+		self.TOLISSDataRefThrottle = XPLMFindDataRef("AirbusFBW/throttle_input") #array 5 dados [L, R, Mandar Nada, Mandar Nada, Mandar Nada]
+		return 1
 
 	def ZIBODataREF(self):
 		# Data Refs do ZIBO
@@ -262,11 +277,11 @@ class PythonInterface:
 		return 0
 
 	def createCalibrarWindow(self):
-		# (left, top, bottom, right) lefto, esquerda, base, direita - A origem e no canto inferior esquerdo!
+		# (left, top, bottom, right) left0, esquerda, base, direita - A origem e no canto inferior esquerdo!
 		left = 420
 		top = 540
 		right = left + 160
-		bottom = top - 370
+		bottom = top - 460
 		leftRst = left + 20 #com margem
 		topRst = top
 		rightRst = right - 20 #com margem
@@ -327,17 +342,54 @@ class PythonInterface:
 		bottom = top - 5
 		XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, calWindow, xpWidgetClass_Caption)
 
+		top -= 15
+		bottom = top - 20
+		self.calibrarPropButton = XPCreateWidget(left, top, right, bottom, 1, "Ajuste de Propeller", 0, calWindow, xpWidgetClass_Button)
+		XPSetWidgetProperty(self.calibrarPropButton, xpProperty_ButtonType, xpPushButton)
+
+		top -= 20
+		bottom = top - 20
+		self.textPropAdjust = XPCreateWidget(left, top, right, bottom, 1, "Min " + str(int(self.configs['stepPropellerAdjustMin'])) + ' | Max ' + str(int(self.configs['stepPropellerAdjustMax'])), 0, calWindow, xpWidgetClass_Caption)
+
+		top -= 15
+		bottom = top - 5
+		XPCreateWidget(left-20, top, right+20, bottom, 1, separador, 0, calWindow, xpWidgetClass_Caption)
+
 		top -= 20
 		bottom = top - 20
 		right = left + 5
 		self.airplaneWidgets = XPCreateWidget(left, top, right, bottom, 1, '', 0, calWindow, xpWidgetClass_Button)
 		left = right + 5
 		right = rightRst
-		XPCreateWidget(left, top, right, bottom, 1, self.aircraftMsg[0], 0, calWindow, xpWidgetClass_Caption)
+		XPCreateWidget(left, top, right, bottom, 1, 'Marque para ZIBO', 0, calWindow, xpWidgetClass_Caption)
 		XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonType, xpRadioButton)
 		XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonBehavior, xpButtonBehaviorCheckBox)
-		XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, int(self.configs['aircraft'] == self.aircraftType[0]))
+		XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, 0)
 		left = leftRst		
+
+		top -= 20
+		bottom = top - 20
+		right = left + 5
+		self.airplaneWidgetsToliss = XPCreateWidget(left, top, right, bottom, 1, '', 0, calWindow, xpWidgetClass_Button)
+		left = right + 5
+		right = rightRst
+		XPCreateWidget(left, top, right, bottom, 1, 'Marque para TOLISS', 0, calWindow, xpWidgetClass_Caption)
+		XPSetWidgetProperty(self.airplaneWidgetsToliss, xpProperty_ButtonType, xpRadioButton)
+		XPSetWidgetProperty(self.airplaneWidgetsToliss, xpProperty_ButtonBehavior, xpButtonBehaviorCheckBox)
+		XPSetWidgetProperty(self.airplaneWidgetsToliss, xpProperty_ButtonState, 0)
+		left = leftRst			
+
+		top -= 20
+		bottom = top - 20
+		right = left + 5
+		self.airplaneWidgetsKA350 = XPCreateWidget(left, top, right, bottom, 1, '', 0, calWindow, xpWidgetClass_Button)
+		left = right + 5
+		right = rightRst
+		XPCreateWidget(left, top, right, bottom, 1, 'Marque para KA350', 0, calWindow, xpWidgetClass_Caption)
+		XPSetWidgetProperty(self.airplaneWidgetsKA350, xpProperty_ButtonType, xpRadioButton)
+		XPSetWidgetProperty(self.airplaneWidgetsKA350, xpProperty_ButtonBehavior, xpButtonBehaviorCheckBox)
+		XPSetWidgetProperty(self.airplaneWidgetsKA350, xpProperty_ButtonState, 0)
+		left = leftRst	
 
 		top -= 15
 		bottom = top - 5
@@ -387,10 +439,34 @@ class PythonInterface:
 		if inMessage == xpMsg_ButtonStateChanged and inParam1 == self.airplaneWidgets:
 			if inParam2:
 				XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, 1)
-				XPSetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, 9)				
+				XPSetWidgetProperty(self.airplaneWidgetsToliss, xpProperty_ButtonState, 0)				
+				XPSetWidgetProperty(self.airplaneWidgetsKA350, xpProperty_ButtonState, 0)
+				XPSetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, 9)
 				XPSetWidgetDescriptor(self.textflap, " Posicoes FLAPS 9")
 			else:
 				XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, 0)
+			return 1
+
+		if inMessage == xpMsg_ButtonStateChanged and inParam1 == self.airplaneWidgetsToliss:
+			if inParam2:
+				XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, 0)
+				XPSetWidgetProperty(self.airplaneWidgetsToliss, xpProperty_ButtonState, 1)				
+				XPSetWidgetProperty(self.airplaneWidgetsKA350, xpProperty_ButtonState, 0)
+				XPSetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, 5)				
+				XPSetWidgetDescriptor(self.textflap, " Posicoes FLAPS 5")
+			else:
+				XPSetWidgetProperty(self.airplaneWidgetsToliss, xpProperty_ButtonState, 0)
+			return 1
+
+		if inMessage == xpMsg_ButtonStateChanged and inParam1 == self.airplaneWidgetsKA350:
+			if inParam2:
+				XPSetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, 0)
+				XPSetWidgetProperty(self.airplaneWidgetsToliss, xpProperty_ButtonState, 0)				
+				XPSetWidgetProperty(self.airplaneWidgetsKA350, xpProperty_ButtonState, 1)
+				XPSetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, 5)				
+				XPSetWidgetDescriptor(self.textflap, " Posicoes FLAPS 5")
+			else:
+				XPSetWidgetProperty(self.airplaneWidgetsKA350, xpProperty_ButtonState, 0)
 			return 1
 
 		if inMessage == xpMsg_ScrollBarSliderPositionChanged and inParam1 == self.flapSlider:
@@ -419,21 +495,50 @@ class PythonInterface:
 				self.configs['stepFlapMax'] = self.data[5]+1
 				self.calibrar = True
 				return 1
+
+			if (inParam1 == self.calibrarPropButton):
+				XPSetWidgetDescriptor(self.calibrarPropButton, "Mova no aviao!")
+				XPSetWidgetProperty (self.calibrarPropButton, xpProperty_Enabled, 0)
+				prop = XPLMGetDataf(self.DataRefPropellerAll)
+				self.configs['stepPropellerAdjustMin'] = prop
+				self.configs['stepPropellerAdjustMax'] = prop
+
+				self.calibarProp = True
+				return 1
+
 			if (inParam1 == self.save):				
 				if XPGetWidgetProperty(self.airplaneWidgets, xpProperty_ButtonState, None):
 					self.configs['aircraft'] = self.aircraftType[0]
 					self.ziboDRef = True
 					self.ZIBODataREF()					
 				else:
-					self.configs['aircraft'] = ''
 					self.ziboDRef = False
 
+					if XPGetWidgetProperty(self.airplaneWidgetsToliss, xpProperty_ButtonState, None):
+						self.configs['aircraft'] = self.aircraftType[0]
+						self.tolissDRef = True
+						self.TolissDataRef()					
+					else:
+						self.tolissDRef = False
+
+						if XPGetWidgetProperty(self.airplaneWidgetsKA350, xpProperty_ButtonState, None):
+							self.configs['aircraft'] = self.aircraftType[0]
+							self.ka350DRef = True
+							self.ka350DataRef()				
+						else:
+							self.ka350DRef = False
+							self.configs['aircraft'] = ''
+
 				self.configs['qtdFlaps'] = XPGetWidgetProperty(self.flapSlider, xpProperty_ScrollBarSliderPosition, None)
+
 				if self.saveConfig():
 					self.configflaps()
 					self.calibrar = False
+					self.calibarProp = False
 					XPSetWidgetDescriptor(self.calibrarButton, "--> CALIBRAR <--")
+					XPSetWidgetDescriptor(self.calibrarPropButton, "Ajuste de Propeller")
 					XPSetWidgetProperty (self.calibrarButton, xpProperty_Enabled, 1)
+					XPSetWidgetProperty (self.calibrarPropButton, xpProperty_Enabled, 1)
 					XPSetWidgetDescriptor(self.textSave, self.MsgB)
 				else:					
 					XPSetWidgetDescriptor(self.textSave, self.MsgB)
@@ -555,9 +660,22 @@ class PythonInterface:
 		XPSetWidgetDescriptor(self.joyMixture, '5 - ['+str(self.configs['stepMixtureMin'])+'/'+str(self.configs['stepMixtureMax'])+'] - '+str(self.data[4]))
 		XPSetWidgetDescriptor(self.joyFlaps, '6 - ['+str(self.configs['stepFlapMin'])+'/'+str(self.configs['stepFlapMax'])+'] - '+str(self.data[5]))
 
+		return
+
+	def calibrarPropeller(self):
+		prop = XPLMGetDataf(self.DataRefPropellerAll)
+		if prop < self.configs['stepPropellerAdjustMin']:
+			self.configs['stepPropellerAdjustMin'] = prop
+		if prop > self.configs['stepPropellerAdjustMax']:
+			self.configs['stepPropellerAdjustMax'] = prop
+
+		XPSetWidgetDescriptor(self.textPropAdjust, "Min " + str(int(self.configs['stepPropellerAdjustMin'])) + ' | Max ' + str(int(self.configs['stepPropellerAdjustMax'])))
+
+		return
+
 	def WhiteLEDS(self):
 		GEARDOWN1DEF = XPLMGetDataf(self.DataRefGear1def)
-		GEARDOWN2DEF = XPLMGetDataf(self.DataRefGear2def)		
+		GEARDOWN2DEF = XPLMGetDataf(self.DataRefGear2def)
 		GEARDOWN3DEF = XPLMGetDataf(self.DataRefGear3def)
 		PARKB = int(XPLMGetDataf(self.DataRefParkingBrake))
 
@@ -612,11 +730,11 @@ class PythonInterface:
 				return self.flapsPositions[i]
 		return 0
 
-	def stepRange(self, value):
-		if value <= 0.0:
-			return 0.0
-		if value >= 1.0:
-			return 1.0
+	def stepRange(self, value, limitMin, limitMax):
+		if value <= limitMin:
+			return limitMin
+		if value >= limitMax:
+			return limitMax
 		return value
 
 	def FloopCallback(self, elapsedMe, elapsedSim, counter, refcon):
@@ -662,25 +780,39 @@ class PythonInterface:
 							self.data[5] = int(readData[6])
 						except:
 							pass
-						self.Potenciometros["A"] = self.stepRange(1-(1.0/stepSpeedBFit)*(self.data[0]-self.configs['stepSpeedBMin']))
-						self.Potenciometros["B"] = self.stepRange((1.0/stepThrottleLFit)*(self.data[1]-self.configs['stepThrottleLMin']))
-						self.Potenciometros["C"] = self.stepRange((1.0/stepThrottleRFit)*(self.data[2]-self.configs['stepThrottleRMin']))
-						self.Potenciometros["D"] = self.configs['stepPropellerAdjustMin'] + (stepPropellerAdjustFit/stepPropellerFit)*(self.data[3]-self.configs['stepPropellerMin'])
-						self.Potenciometros["E"] = self.stepRange((1.0/stepMixtureFit)*(self.data[4]-self.configs['stepMixtureMin']))
-						flaps = self.stepRange(1-(1.0/stepFlapFit)*(self.data[5]-self.configs['stepFlapMin']))
+						self.Potenciometros["A"] = self.stepRange(1-(1.0/stepSpeedBFit)*(self.data[0]-self.configs['stepSpeedBMin']), 0.0, 1.0)
+						self.Potenciometros["B"] = self.stepRange((1.0/stepThrottleLFit)*(self.data[1]-self.configs['stepThrottleLMin']), 0.0, 1.0)
+						self.Potenciometros["C"] = self.stepRange((1.0/stepThrottleRFit)*(self.data[2]-self.configs['stepThrottleRMin']), 0.0, 1.0)
+						if self.ka350DRef:
+							self.Potenciometros["D"] = self.stepRange((1.0/stepPropellerFit)*(self.data[3]-self.configs['stepPropellerMin']), 0.0, 1.0) #Propeller KA350	
+						else:
+							self.Potenciometros["D"] = self.stepRange(self.configs['stepPropellerAdjustMin'] + (stepPropellerAdjustFit/stepPropellerFit)*(self.data[3]-self.configs['stepPropellerMin']), self.configs['stepPropellerAdjustMin'], self.configs['stepPropellerAdjustMax']) #angulo do propeller
+						self.Potenciometros["E"] = self.stepRange((1.0/stepMixtureFit)*(self.data[4]-self.configs['stepMixtureMin']), 0.0, 1.0)
+						flaps = self.stepRange(1-(1.0/stepFlapFit)*(self.data[5]-self.configs['stepFlapMin']), 0.0, 1.0)
 						
 						self.Potenciometros["F"] = self.flapsAdjust(flaps)
 
-						self.throttleA[0] = self.Potenciometros["B"]
-						self.throttleB[0] = self.Potenciometros["C"]
+						self.throttle[0] = self.Potenciometros["B"]
+						self.throttle[1] = self.Potenciometros["C"]
+						self.prop[0] = self.Potenciometros["D"]
+						self.prop[1] = self.Potenciometros["D"]
+						self.prop[2] = self.Potenciometros["D"]
 
-					XPLMSetDataf(self.DataRefSpeedBrake, self.Potenciometros["A"])
-					if XPLMGetDatai(self.DataRefAutoTh) == 0:						
-						XPLMSetDatavf(self.DataRefThrottle, self.throttleA, 0, 8)
-						XPLMSetDatavf(self.DataRefThrottle, self.throttleB, 1, 8)
-					XPLMSetDataf(self.DataRefPropellerAll, self.Potenciometros["D"])
+					XPLMSetDataf(self.DataRefSpeedBrake, self.Potenciometros["A"])						
 					XPLMSetDataf(self.DataRefMixtureAll, self.Potenciometros["E"])
 					XPLMSetDataf(self.DataRefFlap, self.Potenciometros["F"])
+
+					if XPLMGetDatai(self.DataRefAutoTh) == 0:
+						if self.tolissDRef:							
+							XPLMSetDatavf(self.TOLISSDataRefThrottle, self.throttle, 0, 2)
+						else:
+							XPLMSetDatavf(self.DataRefThrottle, self.throttle, 0, 2)
+
+					if self.ka350DRef:
+						XPLMSetDatavf(self.KA350DataRefProp, self.prop, 0, 3)
+					else:
+						XPLMSetDatavf(self.DataRefPropeller, self.prop, 0, 2)
+
 					if self.ziboDRef:
 						if self.Potenciometros["A"] > 0:
 							XPLMSetDataf(self.ZIBODataRefSpeedBrakeStop, 1.0)
@@ -689,9 +821,10 @@ class PythonInterface:
 						XPLMSetDataf(self.ZIBODataRefSpeedBrake, self.Potenciometros["A"])
 						XPLMSetDataf(self.ZIBODataRefFlap, self.Potenciometros["F"])
 
-
 				if self.calibrarWindow:
 					self.calibrarJoystick()
+					if self.calibarProp:
+						self.calibrarPropeller()
 
 				if writeAgain == True:
 					self.ardSerial.write(self.LEDS)
