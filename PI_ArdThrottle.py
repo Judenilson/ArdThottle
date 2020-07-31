@@ -798,12 +798,12 @@ class PythonInterface:
 						self.prop[1] = self.Potenciometros["D"]
 						self.prop[2] = self.Potenciometros["D"]
 
-					XPLMSetDataf(self.DataRefSpeedBrake, self.Potenciometros["A"])						
+					XPLMSetDataf(self.DataRefSpeedBrake, self.Potenciometros["A"])
 					XPLMSetDataf(self.DataRefMixtureAll, self.Potenciometros["E"])
 					XPLMSetDataf(self.DataRefFlap, self.Potenciometros["F"])
 
 					if XPLMGetDatai(self.DataRefAutoTh) == 0:
-						if self.tolissDRef:							
+						if self.tolissDRef:
 							XPLMSetDatavf(self.TOLISSDataRefThrottle, self.throttle, 0, 2)
 						else:
 							XPLMSetDatavf(self.DataRefThrottle, self.throttle, 0, 2)
@@ -830,8 +830,7 @@ class PythonInterface:
 					self.ardSerial.write(self.LEDS)
 					writeAgain = False
 					
-		# A funcao devera ser chamada novamente em 0.3 sec
-		return 0.03		
+		return 0.1
 		
 	def XPluginStop(self):
 		pass
